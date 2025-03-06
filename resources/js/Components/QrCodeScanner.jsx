@@ -1,4 +1,5 @@
 import { BrowserMultiFormatReader } from "@zxing/browser";
+import axios from "axios";
 import React, { useEffect, useRef, useState } from "react";
 import Swal from "sweetalert2";
 
@@ -19,7 +20,7 @@ const QrCodeScanner = ({ onSuccessfulScan }) => {
             setScanning(true);
             processingQrCode.current = false;
             const stream = await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: "environment" },
+                video: { facingMode: "user" },
             });
             if (videoRef.current) {
                 videoRef.current.srcObject = stream;
@@ -77,38 +78,17 @@ const QrCodeScanner = ({ onSuccessfulScan }) => {
     // Process the detected QR code
     const processQrCode = async (userId) => {
         try {
-            // Retrieve CSRF token from the meta tag
-            const csrfToken = document
-                .querySelector('meta[name="csrf-token"]')
-                .getAttribute("content");
             // Fetch user details & attendance record
-            const response = await fetch(
-                `/auth/verified/attendance/scan/${userId}`,
-                {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                        "X-CSRF-TOKEN": csrfToken,
-                    },
-                    credentials: "include",
-                }
+            const response = await axios.post(
+                `/auth/verified/attendance/scan/${userId}`
             );
-            if (!response.ok) {
-                const errorData = await response.json();
-                await Swal.fire({
-                    icon: "error",
-                    title: "Error",
-                    text: errorData.error,
-                });
-                return;
-            }
-            const data = await response.json();
+            const data = await response.data;
             // Check if user doesn't exist
             if (!data.user) {
                 await Swal.fire({
                     icon: "error",
                     title: "User Not Found",
-                    text: "This QR code does not match any registered user.",
+                    text: response.data?.error,
                 });
                 return;
             }
@@ -120,36 +100,41 @@ const QrCodeScanner = ({ onSuccessfulScan }) => {
             ) {
                 await Swal.fire({
                     icon: "error",
-                    title: "Already Time In & Out",
-                    text: "You have already scanned in and out for today.",
+                    title: data.error,
+                    text: data.message,
                 });
                 return;
             }
-            // Show confirmation popup
+            // Confirmation Popup
             const { isConfirmed } = await Swal.fire({
-                icon: "question",
-                title: "Confirm Your Identity",
+                icon: "info",
+                title: "Confirm Attendance Details",
                 html: `
-                    <p><strong>Name:</strong> ${data.user.firstname} ${
+                    <div class="text-left">
+                        <h3 class="text-lg font-semibold mb-3">Please Verify Your Information</h3>
+                        <p><strong>Name:</strong> ${data.user.firstname} ${
                     data.user.lastname
                 } ${data.user.middlename}</p>
-                    <p><strong>Company:</strong> ${
-                        data.user.company || "N/A"
-                    }</p>
-                    <p><strong>Designation:</strong> ${
-                        data.user.designation || "N/A"
-                    }</p>
-                    <p><strong>Current Status:</strong> ${
-                        data.attendance
-                            ? data.attendance.time_out
-                                ? "Already Timed Out"
-                                : "Already Timed In"
-                            : "Not Yet Timed In"
-                    }</p>
-                    <p class="mt-3">Is this information correct?</p>
+                        <p><strong>Company:</strong> ${
+                            data.user.company || "N/A"
+                        }</p>
+                        <p><strong>Designation:</strong> ${
+                            data.user.designation || "N/A"
+                        }</p>
+                        <p><strong>Current Attendance Status:</strong> 
+                            ${
+                                data.attendance
+                                    ? data.attendance.time_out
+                                        ? "Already Timed Out"
+                                        : "Already Timed In"
+                                    : "Not Yet Timed In"
+                            }
+                        </p>
+                        <p class="mt-3 text-gray-600">Are you sure you want to proceed with marking attendance?</p>
+                    </div>
                 `,
                 showCancelButton: true,
-                confirmButtonText: "Yes, That's Me",
+                confirmButtonText: "Yes, Proceed",
                 cancelButtonText: "No, Cancel",
                 confirmButtonColor: "#3085d6",
                 cancelButtonColor: "#d33",
@@ -157,48 +142,29 @@ const QrCodeScanner = ({ onSuccessfulScan }) => {
             // If user cancels, do nothing
             if (!isConfirmed) return;
             // Proceed with creating/updating attendance
-            const updateResponse = await fetch(
-                `/auth/verified/attendance/update/${userId}`,
-                {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                        "X-CSRF-TOKEN": csrfToken,
-                    },
-                    credentials: "include",
-                }
+            const updateResponse = await axios.post(
+                `/auth/verified/attendance/update/${userId}`
             );
-            if (!updateResponse.ok) {
-                const updateErrorData = await updateResponse.json();
-                await Swal.fire({
-                    icon: "error",
-                    title: "Error",
-                    text: updateErrorData.error,
-                });
-                return;
-            }
-            const updateData = await updateResponse.json();
-            // Show seating assignment and success message
+            const updateData = await updateResponse.data;
+            // Success Message
             await Swal.fire({
                 icon: "success",
                 title: updateData.success,
+                // text: updateData.message,
                 html: `
-                    <p><strong>Welcome, ${
-                        updateData.user.firstname
-                    }!</strong></p>
-                    <p class="mt-3">Your seating details:</p>
-                    <div class="p-3 bg-light rounded mt-2">
-                        <p><strong>Sector:</strong> ${
-                            updateData.user.sector || "N/A"
+                    <div class="text-left">
+                        <h3 class="text-lg font-semibold mb-3">Attendance Details</h3>
+                        <p><strong>Assigned Sector:</strong> ${
+                            updateData.user.sector || "Not Specified"
                         }</p>
-                        <p><strong>Table Assignment:</strong> ${
-                            updateData.user.table || "N/A"
+                        <p><strong>Assigned Table:</strong> ${
+                            updateData.user.table || "Not Assigned"
                         }</p>
+                        <p class="mt-3 text-center text-green-600">${updateData.message}</p>
                     </div>
-                    <p class="mt-3">Please proceed to your assigned location.</p>
                 `,
-                confirmButtonText: "Got It",
-                confirmButtonColor: "#28a745",
+                confirmButtonText: "OK",
+                confirmButtonColor: "#3085d6",
             });
             // Call the callback to refresh the data after successful scan
             if (typeof onSuccessfulScan === "function") {
@@ -206,10 +172,22 @@ const QrCodeScanner = ({ onSuccessfulScan }) => {
             }
         } catch (error) {
             console.error("Error processing QR code:", error);
+            let errorMessage = "An unknown error occurred";
+            if (error.response) {
+                // The request was made and the server responded with a status code
+                errorMessage =
+                    error.response.data.message ||
+                    error.response.data.error ||
+                    `Server error: ${error.response.status}`;
+            } else if (error.request) {
+                // The request was made but no response was received
+                errorMessage =
+                    "No response received from server. Please check your network connection.";
+            }
             await Swal.fire({
                 icon: "error",
                 title: "Error",
-                text: "An unexpected error occurred while processing the QR code.",
+                text: errorMessage,
             });
         }
     };
